@@ -20,6 +20,7 @@ Then open http://localhost:8000 and allow microphone access.
 
 - **Project** — one self-tape job; holds scenes. Renameable.
 - **Scene** — one sequence of reader lines. Renameable.
+- Drag project or scene cards to reorder them; the order is saved.
 - **Line** — one audio clip. Lines always play in the order recorded.
 
 Everything is stored locally in the browser (IndexedDB). Nothing leaves the device. The app asks the browser for persistent storage so recordings are exempt from automatic cleanup.
