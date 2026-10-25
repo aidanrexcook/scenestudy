@@ -112,16 +112,8 @@ async function renderProjects() {
 
   // Import: open a saved ZIP and jump into the restored project.
   const importInput = el('input', { type: 'file', accept: '.zip,application/zip', style: 'display:none', dataset: { testid: 'import-file' } });
-  importInput.addEventListener('change', async () => {
-    const file = importInput.files[0];
-    if (!file) return;
-    try {
-      const project = await importProject(file);
-      location.hash = `#/project/${project.id}`;
-    } catch (err) {
-      alert(`Could not import: ${err.message}`);
-      importInput.value = '';
-    }
+  importInput.addEventListener('change', () => {
+    if (importInput.files[0]) importZip(importInput.files[0]);
   });
 
   app.replaceChildren(
@@ -466,6 +458,42 @@ async function route() {
   else if ((m = hash.match(/^#\/scene\/([\w-]+)\/play$/))) await renderPlay(m[1]);
   else await renderProjects();
 }
+
+// ---- ZIP import (shared by the Import button and drag & drop) ----
+async function importZip(file) {
+  try {
+    const project = await importProject(file);
+    const target = `#/project/${project.id}`;
+    if (location.hash === target) route();
+    else location.hash = target; // jump into the restored project
+  } catch (err) {
+    alert(`Could not import: ${err.message}`);
+  }
+}
+
+// Drag a saved ZIP anywhere in the window to import it.
+const dropOverlay = el('div', { class: 'drop-overlay', dataset: { testid: 'drop-overlay' } },
+  'Drop ZIP to import project');
+document.body.append(dropOverlay);
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => {
+  if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+  e.preventDefault();
+  dragDepth += 1;
+  dropOverlay.classList.add('visible');
+});
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('dragleave', () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) dropOverlay.classList.remove('visible');
+});
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  dropOverlay.classList.remove('visible');
+  const file = [...(e.dataTransfer?.files || [])].find((f) => f.name.toLowerCase().endsWith('.zip'));
+  if (file) importZip(file);
+});
 
 window.addEventListener('hashchange', route);
 route();

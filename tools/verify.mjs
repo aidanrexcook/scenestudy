@@ -2,6 +2,7 @@
 // Run: node tools/verify.mjs   (starts its own local server on :8787)
 import { chromium } from 'playwright-core';
 import { spawn, execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 const PORT = 8787;
 const BASE = `http://localhost:${PORT}`;
@@ -145,7 +146,25 @@ try {
   check('imported line plays', await waitForStatus(page, 'play-status', 'Playing line 1 of 4'));
   check('imported line plays to the end', await waitForStatus(page, 'play-status', 'Press to play line 2 of 4'));
 
-  // 13. Storage persistence (grant depends on browser heuristics — informational)
+  // 13. Drag & drop a ZIP anywhere in the window — overlay shows, drop imports
+  await page.goto(`${BASE}/#/`);
+  await page.waitForSelector('[data-testid="project-card"]');
+  const zipB64 = readFileSync(zipPath).toString('base64');
+  await page.evaluate((b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], 'Callback Tape.zip', { type: 'application/zip' }));
+    window.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    if (!document.querySelector('[data-testid="drop-overlay"]').classList.contains('visible')) {
+      throw new Error('drop overlay did not appear on dragenter');
+    }
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, zipB64);
+  await page.waitForSelector('[data-testid="project-title"]');
+  check('drag-and-drop imports project and jumps into it',
+    (await page.textContent('[data-testid="project-title"]')) === 'Callback Tape');
+
+  // 14. Storage persistence (grant depends on browser heuristics — informational)
   console.log(`INFO  storage persisted: ${await page.evaluate(() => navigator.storage.persisted())}`);
 } catch (err) {
   failures++;

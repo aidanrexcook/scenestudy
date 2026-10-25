@@ -129,3 +129,14 @@ h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spa
 .stage.playing { border-color: var(--ok); background: #1b2420; }
 .stage.reset-flash { border-color: var(--accent); background: #1b2230; }
 .lines.compact .line-row { padding: 8px 14px; }
+
+/* Drag & drop import overlay */
+.drop-overlay {
+  position: fixed; inset: 0; z-index: 10;
+  display: none; place-items: center;
+  background: rgba(18, 20, 23, 0.88);
+  border: 3px dashed var(--accent); border-radius: 16px;
+  font-size: 1.5rem; font-weight: 600;
+  pointer-events: none; /* lets the drop event reach the window */
+}
+.drop-overlay.visible { display: grid; }
