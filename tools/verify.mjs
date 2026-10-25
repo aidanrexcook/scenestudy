@@ -132,11 +132,15 @@ try {
       && listing.includes('Callback Tape/Opening Scene/line-01.webm')
       && listing.includes('line-04.'));
 
-  // 12. Import the ZIP back — full round trip
+  // 12. Import the ZIP back — full round trip. Unlike creating, importing
+  // stays on the projects list.
   await page.setInputFiles('[data-testid="import-file"]', zipPath);
-  await page.waitForSelector('[data-testid="project-title"]');
-  check('import restores project and jumps into it',
-    (await page.textContent('[data-testid="project-title"]')) === 'Callback Tape');
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="project-card"]').length === 2);
+  check('import stays on projects screen with new card',
+    await page.locator('[data-testid="project-title"]').count() === 0);
+  await page.locator('[data-testid="project-card"]').nth(1).locator('.card-title').click();
+  await page.waitForSelector('[data-testid="scene-card"]');
+  check('imported project restored', (await page.textContent('[data-testid="project-title"]')) === 'Callback Tape');
   await page.click('[data-testid="scene-card"] .card-title');
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="line-row"]').length === 4);
   check('imported scene has all 4 lines', true);
@@ -160,9 +164,9 @@ try {
     }
     window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
   }, zipB64);
-  await page.waitForSelector('[data-testid="project-title"]');
-  check('drag-and-drop imports project and jumps into it',
-    (await page.textContent('[data-testid="project-title"]')) === 'Callback Tape');
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="project-card"]').length === 3);
+  check('drag-and-drop imports and stays on projects screen',
+    await page.locator('[data-testid="project-title"]').count() === 0);
 
   // 14. Storage persistence (grant depends on browser heuristics — informational)
   console.log(`INFO  storage persisted: ${await page.evaluate(() => navigator.storage.persisted())}`);

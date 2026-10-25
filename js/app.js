@@ -460,12 +460,13 @@ async function route() {
 }
 
 // ---- ZIP import (shared by the Import button and drag & drop) ----
+// Unlike creating, importing does NOT enter the project — it lands on the
+// projects list with the new card added.
 async function importZip(file) {
   try {
-    const project = await importProject(file);
-    const target = `#/project/${project.id}`;
-    if (location.hash === target) route();
-    else location.hash = target; // jump into the restored project
+    await importProject(file);
+    if ((location.hash || '#/') === '#/') route(); // already on the list: refresh it
+    else location.hash = '#/';
   } catch (err) {
     alert(`Could not import: ${err.message}`);
   }
