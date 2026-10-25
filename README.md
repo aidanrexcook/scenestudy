@@ -35,9 +35,11 @@ Everything is stored locally in the browser (IndexedDB). Nothing leaves the devi
 
 Each finished recording becomes the next line. Any line can be previewed (▶), re-recorded (⟳), or deleted (✕).
 
-**Play mode** — tap anywhere on the stage, or press spacebar:
-- One press plays the next line in full.
-- Hold for 1 second to reset to line 1, paused.
+**Play mode** — tap anywhere on the stage, or press spacebar. Two styles, picked with the toggle:
+- *Tap to play*: one press plays the next line in full; hold 1 second to reset to line 1.
+- *Hold to play*: the line plays while the input is held; release pauses, the next hold resumes; double-press to reset to line 1.
+
+Leaving a name blank when creating auto-names it: Project1, Project2… / Scene1, Scene2…
 
 ## Code layout
 
