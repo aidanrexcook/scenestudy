@@ -460,11 +460,22 @@ async function route() {
 }
 
 // ---- ZIP import (shared by the Import button and drag & drop) ----
+// Brief confirmation message, bottom of the screen.
+function showToast(text) {
+  const toast = el('div', { class: 'toast', dataset: { testid: 'toast' } }, text);
+  document.body.append(toast);
+  setTimeout(() => toast.remove(), 3500);
+}
+
 // Unlike creating, importing does NOT enter the project — it lands on the
-// projects list with the new card added.
+// projects list. An import matching an existing project merges into it.
 async function importZip(file) {
   try {
-    await importProject(file);
+    const { project, merged, added, skipped } = await importProject(file);
+    const scenes = (n) => `${n} scene${n === 1 ? '' : 's'}`;
+    showToast(merged
+      ? `Merged into “${project.name}” — ${scenes(added)} added, ${skipped} duplicate${skipped === 1 ? '' : 's'} skipped`
+      : `Imported “${project.name}”`);
     if ((location.hash || '#/') === '#/') route(); // already on the list: refresh it
     else location.hash = '#/';
   } catch (err) {

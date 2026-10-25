@@ -49,27 +49,71 @@ export async function saveProject(project) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
-// Reads a saved ZIP and recreates its project. Returns the new project.
+async function sha256Hex(bytes) {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// A scene's identity is its audio content: the ordered hashes of its lines.
+async function sceneSignature(lineBytes) {
+  const hashes = [];
+  for (const b of lineBytes) hashes.push(await sha256Hex(b));
+  return hashes.join('|');
+}
+
+// Reads a saved ZIP and restores its project. If a project with the same
+// name already exists, merges into it: scenes whose audio is identical to
+// an existing scene are skipped, so re-importing never creates duplicates.
+// Returns { project, merged, added, skipped }.
 export async function importProject(file) {
   const entries = readZip(await file.arrayBuffer());
   const manifestEntry = entries.find((e) => e.path === 'manifest.json');
   if (!manifestEntry) throw new Error('this ZIP is not a SceneStudy export (no manifest.json)');
   const manifest = JSON.parse(new TextDecoder().decode(manifestEntry.bytes));
   if (manifest.app !== 'scenestudy') throw new Error('this ZIP is not a SceneStudy export');
-
   const byPath = new Map(entries.map((e) => [e.path, e]));
-  const project = await db.createProject(manifest.project);
+
+  const existing = (await db.listProjects()).find((p) => p.name === manifest.project);
+  const project = existing || await db.createProject(manifest.project);
+
+  // Content signatures and names of scenes already in the target project.
+  const existingSigs = new Set();
+  const namesTaken = new Set();
+  if (existing) {
+    for (const scene of await db.listScenes(project.id)) {
+      namesTaken.add(scene.name);
+      const lines = await db.listLines(scene.id);
+      const bytes = await Promise.all(lines.map((l) => l.blob.arrayBuffer()));
+      existingSigs.add(await sceneSignature(bytes.map((b) => new Uint8Array(b))));
+    }
+  }
+
+  let added = 0;
+  let skipped = 0;
   for (const sceneManifest of manifest.scenes) {
-    const scene = await db.createScene(project.id, sceneManifest.name);
-    for (const line of sceneManifest.lines) {
+    const lineBytes = sceneManifest.lines.map((line) => {
       const entry = byPath.get(line.file);
       if (!entry) throw new Error(`audio missing from ZIP: ${line.file}`);
+      return entry.bytes;
+    });
+    const sig = await sceneSignature(lineBytes);
+    if (existingSigs.has(sig)) { skipped += 1; continue; } // identical scene already there
+    existingSigs.add(sig);
+
+    // Same name but different audio: keep both, suffixing the newcomer.
+    let name = sceneManifest.name;
+    for (let n = 2; namesTaken.has(name); n++) name = `${sceneManifest.name} (${n})`;
+    namesTaken.add(name);
+
+    const scene = await db.createScene(project.id, name);
+    for (const [i, line] of sceneManifest.lines.entries()) {
       await db.addLine(scene.id, {
-        blob: new Blob([entry.bytes], { type: line.mimeType }),
+        blob: new Blob([lineBytes[i]], { type: line.mimeType }),
         mimeType: line.mimeType,
         duration: line.duration,
       });
     }
+    added += 1;
   }
-  return project;
+  return { project, merged: !!existing, added, skipped };
 }
