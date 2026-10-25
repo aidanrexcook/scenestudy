@@ -161,9 +161,10 @@ try {
   check('imported line plays', await waitForStatus(page, 'play-status', 'Playing line 1 of 4'));
   check('imported line plays to the end', await waitForStatus(page, 'play-status', 'Press to play line 2 of 4'));
 
-  // 14. Drag & drop a duplicate ZIP — overlay shows, drop merges, no new card
-  await page.goto(`${BASE}/#/`);
-  await page.waitForSelector('[data-testid="project-card"]');
+  // 14. Drag & drop a duplicate ZIP while inside a project — merges and the
+  // user stays exactly where they were.
+  await page.click('.back'); // play view → scene list of 'Callback Tape'
+  await page.waitForSelector('[data-testid="project-title"]');
   const zipB64 = readFileSync(zipPath).toString('base64');
   await page.evaluate((b64) => {
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -176,7 +177,12 @@ try {
     window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
   }, zipB64);
   await page.waitForFunction(() => document.querySelector('[data-testid="toast"]')?.textContent.includes('Merged'));
-  check('drag-and-drop duplicate merges, no new card',
+  check('drag-and-drop merges and stays inside the project',
+    (await page.textContent('[data-testid="project-title"]')) === 'Callback Tape'
+      && (await page.locator('[data-testid="scene-card"]').count()) === 1);
+  await page.goto(`${BASE}/#/`);
+  await page.waitForSelector('[data-testid="project-card"]');
+  check('still exactly one project after all imports',
     (await page.locator('[data-testid="project-card"]').count()) === 1);
 
   // 15. Storage persistence (grant depends on browser heuristics — informational)

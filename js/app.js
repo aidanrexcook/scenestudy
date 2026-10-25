@@ -467,8 +467,8 @@ function showToast(text) {
   setTimeout(() => toast.remove(), 3500);
 }
 
-// Unlike creating, importing does NOT enter the project — it lands on the
-// projects list. An import matching an existing project merges into it.
+// Unlike creating, importing never navigates — the user stays exactly where
+// they are. An import matching an existing project merges into it.
 async function importZip(file) {
   try {
     const { project, merged, added, skipped } = await importProject(file);
@@ -476,8 +476,10 @@ async function importZip(file) {
     showToast(merged
       ? `Merged into “${project.name}” — ${scenes(added)} added, ${skipped} duplicate${skipped === 1 ? '' : 's'} skipped`
       : `Imported “${project.name}”`);
-    if ((location.hash || '#/') === '#/') route(); // already on the list: refresh it
-    else location.hash = '#/';
+    // Refresh list views in place so new cards appear; scene views are
+    // untouched by an import (it only ever adds scenes), so leave them be.
+    const hash = location.hash || '#/';
+    if (hash === '#/' || hash.startsWith('#/project/')) route();
   } catch (err) {
     alert(`Could not import: ${err.message}`);
   }
