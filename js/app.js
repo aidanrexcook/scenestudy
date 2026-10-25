@@ -5,7 +5,7 @@
 import * as db from './db.js';
 import { Recorder } from './recorder.js';
 import { SequencePlayer } from './player.js';
-import { saveProject } from './export.js';
+import { saveProject, importProject } from './export.js';
 
 // Ask the browser to exempt our recordings from automatic storage eviction.
 navigator.storage?.persist?.().catch(() => {});
@@ -35,17 +35,15 @@ function fmtDuration(s) {
   return s >= 10 ? `${Math.round(s)}s` : `${s.toFixed(1)}s`;
 }
 
-// Save button: exports the project to a folder on the device, flashes ✓ when done.
+// Save button: downloads the project as one ZIP, flashes ✓ when done.
 function saveButton(project) {
-  const btn = el('button', { class: 'icon-btn', title: 'Save project to a folder on this device', dataset: { testid: 'save-project' } }, '⬇');
+  const btn = el('button', { class: 'icon-btn', title: 'Save project as a ZIP file', dataset: { testid: 'save-project' } }, '⬇');
   btn.addEventListener('click', async () => {
     btn.disabled = true;
     try {
-      const result = await saveProject(project);
-      if (result !== 'cancelled') {
-        btn.textContent = '✓';
-        setTimeout(() => { btn.textContent = '⬇'; }, 1500);
-      }
+      await saveProject(project);
+      btn.textContent = '✓';
+      setTimeout(() => { btn.textContent = '⬇'; }, 1500);
     } catch (err) {
       alert(`Could not save project: ${err.message}`);
     } finally {
@@ -112,13 +110,29 @@ async function renderProjects() {
   };
   nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
 
+  // Import: open a saved ZIP and jump into the restored project.
+  const importInput = el('input', { type: 'file', accept: '.zip,application/zip', style: 'display:none', dataset: { testid: 'import-file' } });
+  importInput.addEventListener('change', async () => {
+    const file = importInput.files[0];
+    if (!file) return;
+    try {
+      const project = await importProject(file);
+      location.hash = `#/project/${project.id}`;
+    } catch (err) {
+      alert(`Could not import: ${err.message}`);
+      importInput.value = '';
+    }
+  });
+
   app.replaceChildren(
     el('header', {}, el('h1', {}, 'SceneStudy'), el('p', { class: 'tagline' }, 'Record a reader’s lines, play them back one press at a time.')),
     el('section', {},
       el('h2', {}, 'Projects'),
       list,
       el('div', { class: 'new-row' }, nameInput,
-        el('button', { class: 'btn', dataset: { testid: 'create-project' }, onclick: create }, 'Create')),
+        el('button', { class: 'btn', dataset: { testid: 'create-project' }, onclick: create }, 'Create'),
+        el('button', { class: 'btn secondary', dataset: { testid: 'import-project' }, onclick: () => importInput.click() }, 'Import ZIP'),
+        importInput),
     ),
   );
 }

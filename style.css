@@ -56,6 +56,7 @@ h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spa
   padding: 12px 20px; font-size: 1rem; cursor: pointer;
 }
 .btn:hover { filter: brightness(1.1); }
+.btn.secondary { background: var(--panel-2); color: var(--text); }
 
 .icon-btn {
   background: var(--panel-2); color: var(--text); border: none; border-radius: 8px;

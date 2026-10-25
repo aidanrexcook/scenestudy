@@ -119,37 +119,31 @@ try {
   await page.waitForFunction(() => document.querySelector('.card-title')?.textContent === 'Callback Tape');
   check('rename project', true);
 
-  // 11. Save project to a folder — stub the directory picker with the
-  // browser's private file system so the real folder-writing code runs.
-  await page.evaluate(() => { window.showDirectoryPicker = () => navigator.storage.getDirectory(); });
-  await page.click('[data-testid="save-project"]');
-  await page.waitForFunction(() => document.querySelector('[data-testid="save-project"]')?.textContent === '✓');
-  const saved = await page.evaluate(async () => {
-    const files = [];
-    async function walk(dir, prefix) {
-      for await (const [name, handle] of dir.entries()) {
-        if (handle.kind === 'directory') await walk(handle, `${prefix}${name}/`);
-        else files.push(`${prefix}${name}:${(await handle.getFile()).size}`);
-      }
-    }
-    await walk(await navigator.storage.getDirectory(), '');
-    return files.sort();
-  });
-  check('save creates project folder with one folder per scene',
-    saved.length === 4
-      && saved.every((f) => f.startsWith('Callback Tape/Opening Scene/line-'))
-      && saved.every((f) => Number(f.split(':')[1]) > 0),
-    saved.join(', '));
-
-  // 12. ZIP fallback when the browser has no folder picker
-  await page.evaluate(() => { window.showDirectoryPicker = undefined; });
+  // 11. Save project as a ZIP download
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.click('[data-testid="save-project"]'),
   ]);
-  const listing = execSync(`unzip -l "${await download.path()}"`).toString();
-  check('zip fallback has same folder layout',
-    listing.includes('Callback Tape/Opening Scene/line-01.webm') && listing.includes('line-04.'));
+  const zipPath = await download.path();
+  const listing = execSync(`unzip -l "${zipPath}"`).toString();
+  check('zip has manifest and one folder per scene',
+    listing.includes('manifest.json')
+      && listing.includes('Callback Tape/Opening Scene/line-01.webm')
+      && listing.includes('line-04.'));
+
+  // 12. Import the ZIP back — full round trip
+  await page.setInputFiles('[data-testid="import-file"]', zipPath);
+  await page.waitForSelector('[data-testid="project-title"]');
+  check('import restores project and jumps into it',
+    (await page.textContent('[data-testid="project-title"]')) === 'Callback Tape');
+  await page.click('[data-testid="scene-card"] .card-title');
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="line-row"]').length === 4);
+  check('imported scene has all 4 lines', true);
+  await page.click('[data-testid="tab-play"]');
+  check('imported scene play ready', await waitForStatus(page, 'play-status', 'Press to play line 1 of 4'));
+  await page.keyboard.press('Space');
+  check('imported line plays', await waitForStatus(page, 'play-status', 'Playing line 1 of 4'));
+  check('imported line plays to the end', await waitForStatus(page, 'play-status', 'Press to play line 2 of 4'));
 
   // 13. Storage persistence (grant depends on browser heuristics — informational)
   console.log(`INFO  storage persisted: ${await page.evaluate(() => navigator.storage.persisted())}`);

@@ -1,5 +1,5 @@
-// zip.js — minimal ZIP writer, store-only (no compression; the audio is
-// already compressed). Used when the browser can't write a real folder.
+// zip.js — minimal ZIP writer + reader, store-only (no compression; the
+// audio is already compressed). Handles the app's own export format.
 
 const crcTable = (() => {
   const table = new Uint32Array(256);
@@ -68,4 +68,38 @@ export async function makeZip(entries) {
   parts.push(end);
 
   return new Blob(parts, { type: 'application/zip' });
+}
+
+// ZIP file (ArrayBuffer) → [{ path, bytes }]
+export function readZip(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+
+  // Find the end-of-central-directory record, scanning back past any comment.
+  let eocd = bytes.length - 22;
+  while (eocd >= 0 && view.getUint32(eocd, true) !== 0x06054b50) eocd--;
+  if (eocd < 0) throw new Error('not a ZIP file');
+
+  const count = view.getUint16(eocd + 10, true);
+  let offset = view.getUint32(eocd + 16, true);
+  const decoder = new TextDecoder();
+  const entries = [];
+  for (let n = 0; n < count; n++) {
+    if (view.getUint32(offset, true) !== 0x02014b50) throw new Error('bad ZIP directory');
+    const method = view.getUint16(offset + 10, true);
+    const size = view.getUint32(offset + 24, true);
+    const nameLen = view.getUint16(offset + 28, true);
+    const extraLen = view.getUint16(offset + 30, true);
+    const commentLen = view.getUint16(offset + 32, true);
+    const localOffset = view.getUint32(offset + 42, true);
+    const path = decoder.decode(bytes.subarray(offset + 46, offset + 46 + nameLen));
+    if (method !== 0) throw new Error('compressed ZIP entries are not supported');
+    // Local header's name/extra lengths can differ from the directory's.
+    const dataStart = localOffset + 30
+      + view.getUint16(localOffset + 26, true)
+      + view.getUint16(localOffset + 28, true);
+    entries.push({ path, bytes: bytes.subarray(dataStart, dataStart + size) });
+    offset += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
 }

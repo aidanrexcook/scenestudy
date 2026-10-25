@@ -24,7 +24,7 @@ Then open http://localhost:8000 and allow microphone access.
 
 Everything is stored locally in the browser (IndexedDB). Nothing leaves the device. The app asks the browser for persistent storage so recordings are exempt from automatic cleanup.
 
-**Save to disk:** the ⬇ button next to a project exports it as a real folder — one subfolder per scene, one audio file per line (`Project/Scene/line-01.webm`). Chrome/Edge write the folder directly where you choose; browsers without a folder picker (Safari) download a ZIP with the same layout.
+**Save & transfer:** the ⬇ button next to a project downloads it as one ZIP — inside is a folder per scene with each line as an audio file, plus a manifest with names and order. **Import ZIP** on the projects screen opens a saved ZIP back up, recreating the project exactly. That's the backup and the way to move projects between devices.
 
 ## Using it
 
@@ -41,7 +41,7 @@ Each finished recording becomes the next line. Any line can be previewed (▶), 
 ## Code layout
 
 - `js/db.js` — storage (projects / scenes / lines in IndexedDB)
-- `js/export.js` — save a project to a folder on disk (`js/zip.js` for the ZIP fallback)
+- `js/export.js` — save a project as a ZIP and import it back (`js/zip.js` reads/writes the ZIP format)
 - `js/recorder.js` — microphone capture (MediaRecorder)
 - `js/player.js` — sequential playback with reset
 - `js/app.js` — screens, routing, and input handling
