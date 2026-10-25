@@ -26,13 +26,10 @@ try {
 
   // Build demo data: one project, one scene, three recorded lines.
   await page.fill('[data-testid="new-project-name"]', 'Callback — Detective Show');
-  await page.click('[data-testid="create-project"]');
-  await page.waitForSelector('[data-testid="project-card"]');
-  await page.click('.card-title');
+  await page.click('[data-testid="create-project"]'); // lands in the project
+  await page.waitForSelector('[data-testid="new-scene-name"]');
   await page.fill('[data-testid="new-scene-name"]', 'Interrogation Scene');
-  await page.click('[data-testid="create-scene"]');
-  await page.waitForSelector('[data-testid="scene-card"]');
-  await page.click('[data-testid="scene-card"] .card-title');
+  await page.click('[data-testid="create-scene"]'); // lands in record mode
   await page.waitForFunction(() => document.querySelector('[data-testid="record-status"]')?.textContent.includes('Ready —'));
 
   for (const ms of [1400, 2100, 1000]) {

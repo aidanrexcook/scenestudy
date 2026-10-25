@@ -43,21 +43,19 @@ try {
   const page = await browser.newPage();
   await page.goto(BASE);
 
-  // 1. Create a project
+  // 1. Create a project — lands directly inside it
   await page.fill('[data-testid="new-project-name"]', 'Pilot Episode');
   await page.click('[data-testid="create-project"]');
-  await page.waitForSelector('[data-testid="project-card"]');
-  check('create project', await page.locator('[data-testid="project-card"]').count() === 1);
+  await page.waitForSelector('[data-testid="project-title"]');
+  check('create project jumps into it', (await page.textContent('[data-testid="project-title"]')) === 'Pilot Episode');
 
-  // 2. Create a scene
-  await page.click('.card-title');
+  // 2. Create a scene — lands directly in its record view
   await page.fill('[data-testid="new-scene-name"]', 'Scene 1');
   await page.click('[data-testid="create-scene"]');
-  await page.waitForSelector('[data-testid="scene-card"]');
-  check('create scene', await page.locator('[data-testid="scene-card"]').count() === 1);
+  await page.waitForSelector('[data-testid="scene-title"]');
+  check('create scene jumps into record mode', (await page.textContent('[data-testid="scene-title"]')) === 'Scene 1');
 
   // 3. Record three lines in tap mode
-  await page.click('[data-testid="scene-card"] .card-title');
   check('mic ready', await waitForStatus(page, 'record-status', 'Ready —'));
   await page.click('[data-testid="mode-tap"]');
   for (let i = 1; i <= 3; i++) {

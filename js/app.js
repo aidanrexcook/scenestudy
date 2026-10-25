@@ -82,9 +82,8 @@ async function renderProjects() {
   const create = async () => {
     const name = nameInput.value.trim();
     if (!name) return;
-    await db.createProject(name);
-    nameInput.value = '';
-    route();
+    const project = await db.createProject(name);
+    location.hash = `#/project/${project.id}`; // jump straight into the new project
   };
   nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
 
@@ -131,9 +130,8 @@ async function renderProject(projectId) {
   const create = async () => {
     const name = nameInput.value.trim();
     if (!name) return;
-    await db.createScene(projectId, name);
-    nameInput.value = '';
-    route();
+    const scene = await db.createScene(projectId, name);
+    location.hash = `#/scene/${scene.id}/record`; // jump straight into recording
   };
   nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
 
