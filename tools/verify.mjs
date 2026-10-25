@@ -185,11 +185,52 @@ try {
   check('still exactly one project after all imports',
     (await page.locator('[data-testid="project-card"]').count()) === 1);
 
-  // 15. Storage persistence (grant depends on browser heuristics — informational)
+  // 15. Re-importing a deleted scene restores the original scene order.
+  await page.click('.card-title'); // into 'Callback Tape'
+  await page.waitForSelector('[data-testid="scene-card"]');
+  for (const name of ['Alpha', 'Beta']) { // add two more scenes with one line each
+    await page.fill('[data-testid="new-scene-name"]', name);
+    await page.click('[data-testid="create-scene"]'); // jumps into record mode
+    await page.waitForFunction(() => document.querySelector('[data-testid="record-status"]')?.textContent.includes('Ready —'));
+    await page.click('[data-testid="record-btn"]');
+    await page.waitForTimeout(500);
+    await page.click('[data-testid="record-btn"]');
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="line-row"]').length === 1);
+    await page.click('.back'); // back to the project's scene list
+    await page.waitForSelector('[data-testid="scene-card"]');
+  }
+  const [orderZip] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('[data-testid="save-project"]'),
+  ]);
+  const orderZipPath = await orderZip.path();
+  page.once('dialog', (d) => d.accept());
+  await page.locator('[data-testid="scene-card"]', { hasText: 'Alpha' }).locator('[title="Delete scene"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-card"]').length === 2);
+  await page.evaluate((b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bytes], 'Callback Tape.zip', { type: 'application/zip' }));
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, readFileSync(orderZipPath).toString('base64'));
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="scene-card"]').length === 3);
+  const sceneOrder = await page.$$eval('[data-testid="scene-card"] .card-title', (els) => els.map((e) => e.textContent));
+  check('re-import restores original scene order',
+    JSON.stringify(sceneOrder) === JSON.stringify(['Opening Scene', 'Alpha', 'Beta']),
+    sceneOrder.join(' → '));
+
+  // 16. Storage persistence (grant depends on browser heuristics — informational)
   console.log(`INFO  storage persisted: ${await page.evaluate(() => navigator.storage.persisted())}`);
 } catch (err) {
   failures++;
   console.error('FAIL  unexpected error:', err.message);
+  try {
+    const page = (await browser.contexts())[0]?.pages()[0] ?? browser.contexts()[0]?.pages()[0];
+    if (page) {
+      await page.screenshot({ path: new URL('../.context/verify-failure.png', import.meta.url).pathname });
+      console.error('      state:', await page.evaluate(() => `${location.hash} | ${document.body.innerText.slice(0, 300).replace(/\n+/g, ' · ')}`));
+    }
+  } catch {}
 } finally {
   await browser.close();
   server.kill();

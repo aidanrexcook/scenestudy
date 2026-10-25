@@ -2,7 +2,7 @@
 // A line's audio lives in the `blob` field of its record.
 
 const DB_NAME = 'scenestudy';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // v2: scenes carry an explicit order field
 
 let dbPromise = null;
 
@@ -10,13 +10,30 @@ function openDB() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (e) => {
         const db = req.result;
-        db.createObjectStore('projects', { keyPath: 'id' });
-        const scenes = db.createObjectStore('scenes', { keyPath: 'id' });
-        scenes.createIndex('projectId', 'projectId');
-        const lines = db.createObjectStore('lines', { keyPath: 'id' });
-        lines.createIndex('sceneId', 'sceneId');
+        if (e.oldVersion < 1) {
+          db.createObjectStore('projects', { keyPath: 'id' });
+          const scenes = db.createObjectStore('scenes', { keyPath: 'id' });
+          scenes.createIndex('projectId', 'projectId');
+          const lines = db.createObjectStore('lines', { keyPath: 'id' });
+          lines.createIndex('sceneId', 'sceneId');
+        }
+        if (e.oldVersion === 1) {
+          // Backfill scene order from creation time, per project.
+          const scenes = req.transaction.objectStore('scenes');
+          scenes.getAll().onsuccess = (ev) => {
+            const byProject = new Map();
+            for (const s of ev.target.result) {
+              if (!byProject.has(s.projectId)) byProject.set(s.projectId, []);
+              byProject.get(s.projectId).push(s);
+            }
+            for (const group of byProject.values()) {
+              group.sort((a, b) => a.createdAt - b.createdAt);
+              group.forEach((s, i) => { s.order = i; scenes.put(s); });
+            }
+          };
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -83,7 +100,7 @@ export async function deleteProject(projectId) {
 
 export async function listScenes(projectId) {
   const all = await promisify((await store('scenes')).index('projectId').getAll(projectId));
-  return all.sort((a, b) => a.createdAt - b.createdAt);
+  return all.sort((a, b) => ((a.order ?? 0) - (b.order ?? 0)) || (a.createdAt - b.createdAt));
 }
 
 export async function getScene(sceneId) {
@@ -91,9 +108,24 @@ export async function getScene(sceneId) {
 }
 
 export async function createScene(projectId, name) {
-  const scene = { id: id(), projectId, name, createdAt: Date.now() };
-  await promisify((await store('scenes', 'readwrite')).add(scene));
+  const s = await store('scenes', 'readwrite');
+  const existing = await promisify(s.index('projectId').getAll(projectId));
+  const order = existing.length ? Math.max(...existing.map((sc) => sc.order ?? 0)) + 1 : 0;
+  const scene = { id: id(), projectId, name, order, createdAt: Date.now() };
+  await promisify(s.add(scene));
   return scene;
+}
+
+// Rewrites the order of a project's scenes to match the given id sequence.
+export async function setSceneOrder(projectId, orderedIds) {
+  const s = await store('scenes', 'readwrite');
+  for (let i = 0; i < orderedIds.length; i++) {
+    const scene = await promisify(s.get(orderedIds[i]));
+    if (scene && scene.projectId === projectId) {
+      scene.order = i;
+      await promisify(s.put(scene));
+    }
+  }
 }
 
 export async function renameScene(sceneId, name) {
