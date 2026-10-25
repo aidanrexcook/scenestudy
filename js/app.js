@@ -35,6 +35,16 @@ function fmtDuration(s) {
   return s >= 10 ? `${Math.round(s)}s` : `${s.toFixed(1)}s`;
 }
 
+// Default name for unnamed creations: Project1, Project2… / Scene1, Scene2…
+function nextDefaultName(existingNames, prefix) {
+  let max = 0;
+  for (const name of existingNames) {
+    const m = name.match(new RegExp(`^${prefix}(\\d+)$`));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `${prefix}${max + 1}`;
+}
+
 // Drag cards within a list to reorder; commits the id order when the drag ends.
 function enableReorder(list, onCommit) {
   let dragged = null;
@@ -64,13 +74,13 @@ function enableReorder(list, onCommit) {
 
 // Save button: downloads the project as one ZIP, flashes ✓ when done.
 function saveButton(project) {
-  const btn = el('button', { class: 'icon-btn', title: 'Save project as a ZIP file', dataset: { testid: 'save-project' } }, '⬇');
+  const btn = el('button', { class: 'icon-btn', title: 'Save project as a ZIP file', dataset: { testid: 'save-project' } }, '💾');
   btn.addEventListener('click', async () => {
     btn.disabled = true;
     try {
       await saveProject(project);
       btn.textContent = '✓';
-      setTimeout(() => { btn.textContent = '⬇'; }, 1500);
+      setTimeout(() => { btn.textContent = '💾'; }, 1500);
     } catch (err) {
       alert(`Could not save project: ${err.message}`);
     } finally {
@@ -131,8 +141,7 @@ async function renderProjects() {
 
   const nameInput = el('input', { class: 'new-input', placeholder: 'New project name', dataset: { testid: 'new-project-name' } });
   const create = async () => {
-    const name = nameInput.value.trim();
-    if (!name) return;
+    const name = nameInput.value.trim() || nextDefaultName(projects.map((p) => p.name), 'Project');
     const project = await db.createProject(name);
     location.hash = `#/project/${project.id}`; // jump straight into the new project
   };
@@ -188,8 +197,7 @@ async function renderProject(projectId) {
 
   const nameInput = el('input', { class: 'new-input', placeholder: 'New scene name', dataset: { testid: 'new-scene-name' } });
   const create = async () => {
-    const name = nameInput.value.trim();
-    if (!name) return;
+    const name = nameInput.value.trim() || nextDefaultName(scenes.map((s) => s.name), 'Scene');
     const scene = await db.createScene(projectId, name);
     location.hash = `#/scene/${scene.id}/record`; // jump straight into recording
   };
@@ -405,47 +413,93 @@ async function renderPlay(sceneId) {
   if (!scene) { location.hash = '#/'; return; }
   const lines = await db.listLines(sceneId);
 
+  let playMode = localStorage.getItem('scenestudy.playMode') || 'tap'; // 'tap' | 'hold'
+
   const status = el('p', { class: 'status big', dataset: { testid: 'play-status' } });
+  const hint = el('p', { class: 'hint' });
   const lineList = el('div', { class: 'lines compact' });
-  const stage = el('div', { class: 'stage', dataset: { testid: 'stage' } },
-    status,
-    el('p', { class: 'hint' }, lines.length
-      ? 'Press space or tap anywhere in this area to play the next line. Hold 1 second to reset to line 1.'
-      : 'Record some lines first, then play them back here.'),
-  );
+  const stage = el('div', { class: 'stage', dataset: { testid: 'stage' } }, status, hint);
+  const modeToggle = el('div', { class: 'seg' });
 
   const player = new SequencePlayer(lines, update);
+
+  function renderModeToggle() {
+    modeToggle.replaceChildren(
+      ...[['tap', 'Tap to play'], ['hold', 'Hold to play']].map(([value, label]) =>
+        el('button', {
+          class: `seg-btn ${playMode === value ? 'active' : ''}`,
+          dataset: { testid: `playmode-${value}` },
+          onclick: () => {
+            if (playMode === value) return;
+            playMode = value;
+            localStorage.setItem('scenestudy.playMode', value);
+            player.reset(); // modes have different input meanings; start clean
+            renderModeToggle();
+            update();
+          },
+        }, label)),
+    );
+  }
 
   function update() {
     const n = player.count;
     if (!n) status.textContent = 'No lines recorded yet';
     else if (player.playingIndex !== null) status.textContent = `Playing line ${player.playingIndex + 1} of ${n}`;
-    else if (player.nextIndex >= n) status.textContent = 'End of scene — hold to reset';
-    else status.textContent = `Press to play line ${player.nextIndex + 1} of ${n}`;
+    else if (player.pausedIndex !== null) status.textContent = `Paused in line ${player.pausedIndex + 1} of ${n} — hold to resume`;
+    else if (player.nextIndex >= n) status.textContent = playMode === 'hold' ? 'End of scene — double-press to reset' : 'End of scene — hold to reset';
+    else status.textContent = `${playMode === 'hold' ? 'Hold to play' : 'Press to play'} line ${player.nextIndex + 1} of ${n}`;
+    hint.textContent = !lines.length
+      ? 'Record some lines first, then play them back here.'
+      : playMode === 'hold'
+        ? 'Hold space or press-and-hold this area to play; release to pause. Double-press to reset to line 1.'
+        : 'Press space or tap anywhere in this area to play the next line. Hold 1 second to reset to line 1.';
     stage.classList.toggle('playing', player.playingIndex !== null);
     lineList.replaceChildren(...lines.map((line, i) =>
-      el('div', { class: `line-row ${player.playingIndex === i ? 'current' : ''} ${i < player.nextIndex ? 'done' : ''}` },
+      el('div', { class: `line-row ${player.playingIndex === i || player.pausedIndex === i ? 'current' : ''} ${i < player.nextIndex ? 'done' : ''}` },
         el('span', { class: 'line-num' }, `Line ${i + 1}`),
         el('span', { class: 'line-dur' }, fmtDuration(line.duration)),
       )));
   }
 
-  // One input = next line; holding past HOLD_MS resets to line 1, paused.
+  function flashReset() {
+    stage.classList.add('reset-flash');
+    setTimeout(() => stage.classList.remove('reset-flash'), 400);
+  }
+
+  // Tap mode: one input = next line; holding past HOLD_MS resets to line 1.
+  // Hold mode: line plays while held, release pauses, next hold resumes;
+  // a double-press resets to line 1.
   let holdTimer = null;
   let pressed = false;
+  let pressStartedAt = 0;
+  let lastReleaseAt = 0;
+  let lastPressDuration = Infinity;
   function press() {
     if (pressed) return;
     pressed = true;
-    player.advance();
-    holdTimer = setTimeout(() => {
+    const now = performance.now();
+    // A double-press is two short taps in quick succession — a hold released
+    // and re-pressed is a resume, not a double.
+    const isDouble = now - lastReleaseAt < 300 && lastPressDuration < 250;
+    pressStartedAt = now;
+    if (playMode === 'tap') {
+      player.advance();
+      holdTimer = setTimeout(() => { player.reset(); flashReset(); }, HOLD_MS);
+    } else if (isDouble) {
       player.reset();
-      stage.classList.add('reset-flash');
-      setTimeout(() => stage.classList.remove('reset-flash'), 400);
-    }, HOLD_MS);
+      flashReset();
+    } else {
+      player.resumeOrAdvance();
+    }
   }
   function release() {
+    if (!pressed) return;
     pressed = false;
+    const now = performance.now();
+    lastPressDuration = now - pressStartedAt;
+    lastReleaseAt = now;
     clearTimeout(holdTimer);
+    if (playMode === 'hold') player.pause();
   }
 
   stage.addEventListener('pointerdown', (e) => { e.preventDefault(); press(); });
@@ -472,8 +526,9 @@ async function renderPlay(sceneId) {
 
   app.replaceChildren(
     await sceneHeader(scene, 'play'),
-    el('section', { class: 'play-pane' }, stage, lineList),
+    el('section', { class: 'play-pane' }, modeToggle, stage, lineList),
   );
+  renderModeToggle();
   update();
 }
 

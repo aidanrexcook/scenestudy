@@ -120,6 +120,7 @@ h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spa
 
 /* Play mode */
 .play-pane { display: flex; flex-direction: column; gap: 16px; }
+.play-pane .seg { align-self: center; }
 .stage {
   min-height: 46vh; border-radius: 16px; background: var(--panel);
   border: 2px dashed #39414c;

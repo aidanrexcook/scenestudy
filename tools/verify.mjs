@@ -234,7 +234,47 @@ try {
     JSON.stringify(projectOrder) === JSON.stringify(['Zed', 'Callback Tape']),
     projectOrder.join(' → '));
 
-  // 16. Storage persistence (grant depends on browser heuristics — informational)
+  // 16. Unnamed projects and scenes get numbered default names
+  await page.goto(`${BASE}/#/`);
+  await page.waitForSelector('[data-testid="new-project-name"]');
+  await page.click('[data-testid="create-project"]'); // empty name field
+  await page.waitForSelector('[data-testid="project-title"]');
+  check('unnamed project becomes Project1', (await page.textContent('[data-testid="project-title"]')) === 'Project1');
+  await page.click('[data-testid="create-scene"]'); // empty name field
+  await page.waitForSelector('[data-testid="scene-title"]');
+  check('unnamed scene becomes Scene1', (await page.textContent('[data-testid="scene-title"]')) === 'Scene1');
+  await page.click('.back');
+  await page.waitForSelector('[data-testid="scene-card"]');
+  await page.click('[data-testid="create-scene"]');
+  await page.waitForSelector('[data-testid="scene-title"]');
+  check('second unnamed scene becomes Scene2', (await page.textContent('[data-testid="scene-title"]')) === 'Scene2');
+
+  // 17. Hold-to-play mode: plays while held, pauses on release, resumes,
+  // advances when a line ends, and double-press resets.
+  await page.goto(`${BASE}/#/`);
+  await page.waitForSelector('[data-testid="project-card"]');
+  await page.locator('[data-testid="project-card"]', { hasText: 'Callback Tape' }).locator('.card-title').click();
+  await page.waitForSelector('[data-testid="scene-card"]');
+  await page.locator('[data-testid="scene-card"]', { hasText: 'Opening Scene' }).locator('.card-title').click();
+  await page.click('[data-testid="tab-play"]');
+  await waitForStatus(page, 'play-status', 'line 1 of 4');
+  await page.click('[data-testid="playmode-hold"]');
+  check('hold mode ready', await waitForStatus(page, 'play-status', 'Hold to play line 1 of 4'));
+  await page.keyboard.down('Space');
+  check('hold plays the line', await waitForStatus(page, 'play-status', 'Playing line 1 of 4'));
+  await page.waitForTimeout(300);
+  await page.keyboard.up('Space');
+  check('release pauses mid-line', await waitForStatus(page, 'play-status', 'Paused in line 1 of 4'));
+  await page.keyboard.down('Space');
+  check('hold resumes the line', await waitForStatus(page, 'play-status', 'Playing line 1 of 4'));
+  check('line ends while held, next queued', await waitForStatus(page, 'play-status', 'Hold to play line 2 of 4'));
+  await page.keyboard.up('Space');
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(120);
+  await page.keyboard.press('Space');
+  check('double-press resets to line 1', await waitForStatus(page, 'play-status', 'Hold to play line 1 of 4'));
+
+  // 18. Storage persistence (grant depends on browser heuristics — informational)
   console.log(`INFO  storage persisted: ${await page.evaluate(() => navigator.storage.persisted())}`);
 } catch (err) {
   failures++;
