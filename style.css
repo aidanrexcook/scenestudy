@@ -39,7 +39,9 @@ h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spa
 .card {
   display: flex; align-items: center; justify-content: space-between;
   background: var(--panel); border-radius: 12px; padding: 14px 16px;
+  cursor: grab;
 }
+.card.dragging { opacity: 0.5; outline: 2px dashed var(--accent); }
 .card-title { color: var(--text); text-decoration: none; font-size: 1.1rem; flex: 1; }
 .card-title:hover { color: var(--accent); }
 .card-actions { display: flex; gap: 6px; }

@@ -2,7 +2,7 @@
 // A line's audio lives in the `blob` field of its record.
 
 const DB_NAME = 'scenestudy';
-const DB_VERSION = 2; // v2: scenes carry an explicit order field
+const DB_VERSION = 3; // v2: scenes carry an explicit order; v3: projects too
 
 let dbPromise = null;
 
@@ -34,6 +34,15 @@ function openDB() {
             }
           };
         }
+        if (e.oldVersion >= 1 && e.oldVersion <= 2) {
+          // Backfill project order from creation time.
+          const projects = req.transaction.objectStore('projects');
+          projects.getAll().onsuccess = (ev) => {
+            ev.target.result
+              .sort((a, b) => a.createdAt - b.createdAt)
+              .forEach((p, i) => { p.order = i; projects.put(p); });
+          };
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -60,7 +69,7 @@ const id = () => crypto.randomUUID();
 
 export async function listProjects() {
   const all = await promisify((await store('projects')).getAll());
-  return all.sort((a, b) => a.createdAt - b.createdAt);
+  return all.sort((a, b) => ((a.order ?? 0) - (b.order ?? 0)) || (a.createdAt - b.createdAt));
 }
 
 export async function getProject(projectId) {
@@ -68,9 +77,24 @@ export async function getProject(projectId) {
 }
 
 export async function createProject(name) {
-  const project = { id: id(), name, createdAt: Date.now() };
-  await promisify((await store('projects', 'readwrite')).add(project));
+  const s = await store('projects', 'readwrite');
+  const existing = await promisify(s.getAll());
+  const order = existing.length ? Math.max(...existing.map((p) => p.order ?? 0)) + 1 : 0;
+  const project = { id: id(), name, order, createdAt: Date.now() };
+  await promisify(s.add(project));
   return project;
+}
+
+// Rewrites project order to match the given id sequence.
+export async function setProjectOrder(orderedIds) {
+  const s = await store('projects', 'readwrite');
+  for (let i = 0; i < orderedIds.length; i++) {
+    const project = await promisify(s.get(orderedIds[i]));
+    if (project) {
+      project.order = i;
+      await promisify(s.put(project));
+    }
+  }
 }
 
 export async function renameProject(projectId, name) {

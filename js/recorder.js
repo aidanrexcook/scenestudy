@@ -19,7 +19,9 @@ export class Recorder {
 
   async init() {
     if (this.stream) return;
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (this.disposed) { stream.getTracks().forEach((t) => t.stop()); return; }
+    this.stream = stream;
   }
 
   get recording() {
@@ -54,6 +56,7 @@ export class Recorder {
   }
 
   dispose() {
+    this.disposed = true;
     if (this.rec && this.rec.state === 'recording') this.rec.stop();
     this.rec = null;
     if (this.stream) {

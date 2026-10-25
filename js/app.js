@@ -35,6 +35,33 @@ function fmtDuration(s) {
   return s >= 10 ? `${Math.round(s)}s` : `${s.toFixed(1)}s`;
 }
 
+// Drag cards within a list to reorder; commits the id order when the drag ends.
+function enableReorder(list, onCommit) {
+  let dragged = null;
+  list.addEventListener('dragstart', (e) => {
+    dragged = e.target.closest('.card');
+    if (!dragged) return;
+    dragged.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragged.dataset.id);
+  });
+  list.addEventListener('dragover', (e) => {
+    if (!dragged) return;
+    e.preventDefault();
+    const over = e.target.closest('.card');
+    if (!over || over === dragged) return;
+    const rect = over.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    list.insertBefore(dragged, before ? over : over.nextSibling);
+  });
+  list.addEventListener('dragend', () => {
+    if (!dragged) return;
+    dragged.classList.remove('dragging');
+    dragged = null;
+    onCommit([...list.querySelectorAll('.card')].map((c) => c.dataset.id));
+  });
+}
+
 // Save button: downloads the project as one ZIP, flashes ✓ when done.
 function saveButton(project) {
   const btn = el('button', { class: 'icon-btn', title: 'Save project as a ZIP file', dataset: { testid: 'save-project' } }, '⬇');
@@ -81,7 +108,7 @@ async function renderProjects() {
   const list = el('div', { class: 'card-list' });
   for (const p of projects) {
     const title = el('a', { class: 'card-title', href: `#/project/${p.id}` }, p.name);
-    list.append(el('div', { class: 'card', dataset: { testid: 'project-card' } },
+    list.append(el('div', { class: 'card', draggable: 'true', dataset: { testid: 'project-card', id: p.id } },
       title,
       el('div', { class: 'card-actions' },
         saveButton(p),
@@ -100,6 +127,7 @@ async function renderProjects() {
   if (!projects.length) {
     list.append(el('p', { class: 'hint' }, 'No projects yet. A project holds the scenes for one self-tape.'));
   }
+  enableReorder(list, (ids) => db.setProjectOrder(ids));
 
   const nameInput = el('input', { class: 'new-input', placeholder: 'New project name', dataset: { testid: 'new-project-name' } });
   const create = async () => {
@@ -138,7 +166,7 @@ async function renderProject(projectId) {
   const list = el('div', { class: 'card-list' });
   for (const s of scenes) {
     const title = el('a', { class: 'card-title', href: `#/scene/${s.id}/record` }, s.name);
-    list.append(el('div', { class: 'card', dataset: { testid: 'scene-card' } },
+    list.append(el('div', { class: 'card', draggable: 'true', dataset: { testid: 'scene-card', id: s.id } },
       title,
       el('div', { class: 'card-actions' },
         el('button', { class: 'icon-btn', title: 'Rename scene',
@@ -156,6 +184,7 @@ async function renderProject(projectId) {
   if (!scenes.length) {
     list.append(el('p', { class: 'hint' }, 'No scenes yet. A scene is one sequence of reader lines.'));
   }
+  enableReorder(list, (ids) => db.setSceneOrder(projectId, ids));
 
   const nameInput = el('input', { class: 'new-input', placeholder: 'New scene name', dataset: { testid: 'new-scene-name' } });
   const create = async () => {

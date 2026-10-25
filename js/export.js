@@ -76,26 +76,20 @@ export async function importProject(file) {
   const existing = (await db.listProjects()).find((p) => p.name === manifest.project);
   const project = existing || await db.createProject(manifest.project);
 
-  // Content signatures, names, and current order of scenes in the target.
+  // Content signatures and names of scenes already in the target project.
   const existingSigs = new Set();
-  const sigToSceneId = new Map();
   const namesTaken = new Set();
-  const currentOrder = []; // scene ids in the project's present order
   if (existing) {
     for (const scene of await db.listScenes(project.id)) {
       namesTaken.add(scene.name);
-      currentOrder.push(scene.id);
       const lines = await db.listLines(scene.id);
       const bytes = await Promise.all(lines.map((l) => l.blob.arrayBuffer()));
-      const sig = await sceneSignature(scene.name, bytes.map((b) => new Uint8Array(b)));
-      existingSigs.add(sig);
-      if (!sigToSceneId.has(sig)) sigToSceneId.set(sig, scene.id);
+      existingSigs.add(await sceneSignature(scene.name, bytes.map((b) => new Uint8Array(b))));
     }
   }
 
   let added = 0;
   let skipped = 0;
-  const placements = []; // manifest order: { id, existed } for each scene
   for (const sceneManifest of manifest.scenes) {
     const lineBytes = sceneManifest.lines.map((line) => {
       const entry = byPath.get(line.file);
@@ -103,11 +97,7 @@ export async function importProject(file) {
       return entry.bytes;
     });
     const sig = await sceneSignature(sceneManifest.name, lineBytes);
-    if (existingSigs.has(sig)) { // identical scene already there
-      skipped += 1;
-      placements.push({ id: sigToSceneId.get(sig), existed: true });
-      continue;
-    }
+    if (existingSigs.has(sig)) { skipped += 1; continue; } // identical scene already there
     existingSigs.add(sig);
 
     // Same name but different audio: keep both, suffixing the newcomer.
@@ -124,27 +114,6 @@ export async function importProject(file) {
       });
     }
     added += 1;
-    placements.push({ id: scene.id, existed: false });
   }
-
-  // Keep the manifest's scene order: slot each added scene in just before
-  // the next manifest scene that was already in the project. Scenes the
-  // manifest doesn't know about keep their place.
-  if (existing && added) {
-    const orderIds = [...currentOrder];
-    for (let i = 0; i < placements.length; i++) {
-      if (placements[i].existed) continue;
-      let anchor = orderIds.length;
-      for (let j = i + 1; j < placements.length; j++) {
-        if (placements[j].existed) {
-          const k = orderIds.indexOf(placements[j].id);
-          if (k !== -1) { anchor = k; break; }
-        }
-      }
-      orderIds.splice(anchor, 0, placements[i].id);
-    }
-    await db.setSceneOrder(project.id, orderIds);
-  }
-
   return { project, merged: !!existing, added, skipped };
 }
