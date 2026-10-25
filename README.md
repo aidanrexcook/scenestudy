@@ -24,7 +24,7 @@ Then open http://localhost:8000 and allow microphone access.
 
 Everything is stored locally in the browser (IndexedDB). Nothing leaves the device. The app asks the browser for persistent storage so recordings are exempt from automatic cleanup.
 
-**Save & transfer:** the ⬇ button next to a project downloads it as one ZIP — inside is a folder per scene with each line as an audio file, plus a manifest with names and order. **Import ZIP** on the projects screen — or dragging a saved ZIP anywhere into the window — opens it back up, recreating the project exactly. That's the backup and the way to move projects between devices.
+**Save & transfer:** the ⬇ button next to a project downloads it as one ZIP — inside is a folder per scene with each line as an audio file, plus a manifest with names and order. **Import ZIP** on the projects screen — or dragging a saved ZIP anywhere into the window — opens it back up. If a project with the same name already exists, the import merges into it: scenes with identical audio are skipped, only new scenes are added, so re-importing never creates duplicates. That's the backup and the way to move projects between devices.
 
 ## Using it
 
