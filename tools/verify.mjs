@@ -1,7 +1,7 @@
 // End-to-end verification: drives the real app in Chrome with a fake microphone.
 // Run: node tools/verify.mjs   (starts its own local server on :8787)
 import { chromium } from 'playwright-core';
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 
 const PORT = 8787;
 const BASE = `http://localhost:${PORT}`;
@@ -118,6 +118,41 @@ try {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.querySelector('.card-title')?.textContent === 'Callback Tape');
   check('rename project', true);
+
+  // 11. Save project to a folder — stub the directory picker with the
+  // browser's private file system so the real folder-writing code runs.
+  await page.evaluate(() => { window.showDirectoryPicker = () => navigator.storage.getDirectory(); });
+  await page.click('[data-testid="save-project"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="save-project"]')?.textContent === '✓');
+  const saved = await page.evaluate(async () => {
+    const files = [];
+    async function walk(dir, prefix) {
+      for await (const [name, handle] of dir.entries()) {
+        if (handle.kind === 'directory') await walk(handle, `${prefix}${name}/`);
+        else files.push(`${prefix}${name}:${(await handle.getFile()).size}`);
+      }
+    }
+    await walk(await navigator.storage.getDirectory(), '');
+    return files.sort();
+  });
+  check('save creates project folder with one folder per scene',
+    saved.length === 4
+      && saved.every((f) => f.startsWith('Callback Tape/Opening Scene/line-'))
+      && saved.every((f) => Number(f.split(':')[1]) > 0),
+    saved.join(', '));
+
+  // 12. ZIP fallback when the browser has no folder picker
+  await page.evaluate(() => { window.showDirectoryPicker = undefined; });
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('[data-testid="save-project"]'),
+  ]);
+  const listing = execSync(`unzip -l "${await download.path()}"`).toString();
+  check('zip fallback has same folder layout',
+    listing.includes('Callback Tape/Opening Scene/line-01.webm') && listing.includes('line-04.'));
+
+  // 13. Storage persistence (grant depends on browser heuristics — informational)
+  console.log(`INFO  storage persisted: ${await page.evaluate(() => navigator.storage.persisted())}`);
 } catch (err) {
   failures++;
   console.error('FAIL  unexpected error:', err.message);

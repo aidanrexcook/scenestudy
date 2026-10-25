@@ -5,6 +5,10 @@
 import * as db from './db.js';
 import { Recorder } from './recorder.js';
 import { SequencePlayer } from './player.js';
+import { saveProject } from './export.js';
+
+// Ask the browser to exempt our recordings from automatic storage eviction.
+navigator.storage?.persist?.().catch(() => {});
 
 const HOLD_MS = 1000; // hold this long in play mode to reset to line 1
 
@@ -29,6 +33,26 @@ function el(tag, attrs = {}, ...children) {
 
 function fmtDuration(s) {
   return s >= 10 ? `${Math.round(s)}s` : `${s.toFixed(1)}s`;
+}
+
+// Save button: exports the project to a folder on the device, flashes ✓ when done.
+function saveButton(project) {
+  const btn = el('button', { class: 'icon-btn', title: 'Save project to a folder on this device', dataset: { testid: 'save-project' } }, '⬇');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const result = await saveProject(project);
+      if (result !== 'cancelled') {
+        btn.textContent = '✓';
+        setTimeout(() => { btn.textContent = '⬇'; }, 1500);
+      }
+    } catch (err) {
+      alert(`Could not save project: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  return btn;
 }
 
 // Inline rename: swaps a title for an input; Enter/blur saves, Escape cancels.
@@ -62,6 +86,7 @@ async function renderProjects() {
     list.append(el('div', { class: 'card', dataset: { testid: 'project-card' } },
       title,
       el('div', { class: 'card-actions' },
+        saveButton(p),
         el('button', { class: 'icon-btn', title: 'Rename project',
           onclick: () => startRename(title, p.name, (name) => db.renameProject(p.id, name)) }, '✎'),
         el('button', { class: 'icon-btn danger', title: 'Delete project',
@@ -140,6 +165,7 @@ async function renderProject(projectId) {
     el('header', {},
       el('a', { class: 'back', href: '#/' }, '← Projects'),
       projectTitle,
+      saveButton(project),
       el('button', { class: 'icon-btn', title: 'Rename project',
         onclick: () => startRename(projectTitle, project.name, (name) => db.renameProject(project.id, name)) }, '✎'),
     ),
