@@ -4,7 +4,7 @@
   "description": "Record a reader's lines for a self-tape, play them back one press at a time.",
   "type": "module",
   "scripts": {
-    "start": "python3 -m http.server 8000",
+    "start": "python3 tools/serve.py 8000",
     "verify": "node tools/verify.mjs"
   },
   "devDependencies": {

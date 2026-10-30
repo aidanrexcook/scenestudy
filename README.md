@@ -10,7 +10,7 @@ Record a reader's lines for a self-tape, then play them back one line at a time 
 ## Run it
 
 ```sh
-python3 -m http.server 8000
+python3 tools/serve.py
 # or: npx serve
 ```
 
