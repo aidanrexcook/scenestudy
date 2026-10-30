@@ -4,8 +4,9 @@ import { chromium } from 'playwright-core';
 import { spawn, execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
+const external = process.argv[2]; // optional: verify a deployed URL instead
 const PORT = 8787;
-const BASE = `http://localhost:${PORT}`;
+const BASE = external || `http://localhost:${PORT}`;
 let failures = 0;
 
 function check(name, ok, extra = '') {
@@ -27,8 +28,9 @@ async function waitForStatus(page, testid, expected, timeout = 8000) {
   }
 }
 
-const server = spawn('python3', ['-m', 'http.server', String(PORT)], { cwd: new URL('..', import.meta.url).pathname, stdio: 'ignore' });
-await new Promise((r) => setTimeout(r, 800));
+const server = external ? null
+  : spawn('python3', ['tools/serve.py', String(PORT)], { cwd: new URL('..', import.meta.url).pathname, stdio: 'ignore' });
+if (server) await new Promise((r) => setTimeout(r, 800));
 
 const browser = await chromium.launch({
   channel: 'chrome',
@@ -288,7 +290,7 @@ try {
   } catch {}
 } finally {
   await browser.close();
-  server.kill();
+  server?.kill();
 }
 
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) failed.`);
