@@ -1,0 +1,13 @@
+{
+  "name": "scenestudy",
+  "version": "1.0.0",
+  "description": "Record a reader's lines for a self-tape, play them back one press at a time.",
+  "type": "module",
+  "scripts": {
+    "start": "python3 tools/serve.py 8000",
+    "verify": "node tools/verify.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.56.1"
+  }
+}

@@ -1,0 +1,597 @@
+// app.js — screens and input handling.
+// Routes: #/            projects list
+//         #/project/ID  scenes in a project
+//         #/scene/ID/record  and  #/scene/ID/play
+import * as db from './db.js';
+import { Recorder } from './recorder.js';
+import { SequencePlayer } from './player.js';
+import { saveProject, importProject } from './export.js';
+
+// Ask the browser to exempt our recordings from automatic storage eviction.
+navigator.storage?.persist?.().catch(() => {});
+
+const HOLD_MS = 1000; // hold this long in play mode to reset to line 1
+
+const app = document.getElementById('app');
+let cleanup = null; // teardown for the current view (listeners, mic, audio)
+
+// ---- tiny DOM helper ----
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else if (k === 'dataset') Object.assign(node.dataset, v);
+    else node.setAttribute(k, v);
+  }
+  for (const child of children.flat()) {
+    if (child == null) continue;
+    node.append(child.nodeType ? child : document.createTextNode(child));
+  }
+  return node;
+}
+
+function fmtDuration(s) {
+  return s >= 10 ? `${Math.round(s)}s` : `${s.toFixed(1)}s`;
+}
+
+// Default name for unnamed creations: Project1, Project2… / Scene1, Scene2…
+function nextDefaultName(existingNames, prefix) {
+  let max = 0;
+  for (const name of existingNames) {
+    const m = name.match(new RegExp(`^${prefix}(\\d+)$`));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `${prefix}${max + 1}`;
+}
+
+// Drag cards within a list to reorder; commits the id order when the drag ends.
+function enableReorder(list, onCommit) {
+  let dragged = null;
+  list.addEventListener('dragstart', (e) => {
+    dragged = e.target.closest('.card');
+    if (!dragged) return;
+    dragged.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragged.dataset.id);
+  });
+  list.addEventListener('dragover', (e) => {
+    if (!dragged) return;
+    e.preventDefault();
+    const over = e.target.closest('.card');
+    if (!over || over === dragged) return;
+    const rect = over.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    list.insertBefore(dragged, before ? over : over.nextSibling);
+  });
+  list.addEventListener('dragend', () => {
+    if (!dragged) return;
+    dragged.classList.remove('dragging');
+    dragged = null;
+    onCommit([...list.querySelectorAll('.card')].map((c) => c.dataset.id));
+  });
+}
+
+// Save button: downloads the project as one ZIP, flashes ✓ when done.
+function saveButton(project) {
+  const btn = el('button', { class: 'icon-btn', title: 'Save project as a ZIP file', dataset: { testid: 'save-project' } }, '💾');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      await saveProject(project);
+      btn.textContent = '✓';
+      setTimeout(() => { btn.textContent = '💾'; }, 1500);
+    } catch (err) {
+      alert(`Could not save project: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  return btn;
+}
+
+// Inline rename: swaps a title for an input; Enter/blur saves, Escape cancels.
+function startRename(titleEl, currentName, save) {
+  const input = el('input', { class: 'rename-input', value: currentName });
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (commit) => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    if (commit && name && name !== currentName) await save(name);
+    route(); // re-render the view fresh
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+// ---- Projects list ----
+async function renderProjects() {
+  const projects = await db.listProjects();
+  const list = el('div', { class: 'card-list' });
+  for (const p of projects) {
+    const title = el('a', { class: 'card-title', href: `#/project/${p.id}` }, p.name);
+    list.append(el('div', { class: 'card', draggable: 'true', dataset: { testid: 'project-card', id: p.id } },
+      title,
+      el('div', { class: 'card-actions' },
+        saveButton(p),
+        el('button', { class: 'icon-btn', title: 'Rename project',
+          onclick: () => startRename(title, p.name, (name) => db.renameProject(p.id, name)) }, '✎'),
+        el('button', { class: 'icon-btn danger', title: 'Delete project',
+          onclick: async () => {
+            if (confirm(`Delete project “${p.name}” and all its scenes?`)) {
+              await db.deleteProject(p.id);
+              route();
+            }
+          } }, '✕'),
+      ),
+    ));
+  }
+  if (!projects.length) {
+    list.append(el('p', { class: 'hint' }, 'No projects yet. A project holds the scenes for one self-tape.'));
+  }
+  enableReorder(list, (ids) => db.setProjectOrder(ids));
+
+  const nameInput = el('input', { class: 'new-input', placeholder: 'New project name', dataset: { testid: 'new-project-name' } });
+  const create = async () => {
+    const name = nameInput.value.trim() || nextDefaultName(projects.map((p) => p.name), 'Project');
+    const project = await db.createProject(name);
+    location.hash = `#/project/${project.id}`; // jump straight into the new project
+  };
+  nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
+
+  // Import: open a saved ZIP and jump into the restored project.
+  const importInput = el('input', { type: 'file', accept: '.zip,application/zip', style: 'display:none', dataset: { testid: 'import-file' } });
+  importInput.addEventListener('change', () => {
+    if (importInput.files[0]) importZip(importInput.files[0]);
+  });
+
+  app.replaceChildren(
+    el('header', {}, el('h1', {}, 'SceneStudy'), el('p', { class: 'tagline' }, 'Record a reader’s lines, play them back one press at a time.')),
+    el('section', {},
+      el('h2', {}, 'Projects'),
+      el('div', { class: 'new-row' }, nameInput,
+        el('button', { class: 'btn', dataset: { testid: 'create-project' }, onclick: create }, 'Create'),
+        el('button', { class: 'btn secondary', dataset: { testid: 'import-project' }, onclick: () => importInput.click() }, 'Import ZIP'),
+        importInput),
+      list,
+    ),
+  );
+}
+
+// ---- Project view: scenes ----
+async function renderProject(projectId) {
+  const project = await db.getProject(projectId);
+  if (!project) { location.hash = '#/'; return; }
+  const scenes = await db.listScenes(projectId);
+
+  const list = el('div', { class: 'card-list' });
+  for (const s of scenes) {
+    const title = el('a', { class: 'card-title', href: `#/scene/${s.id}/record` }, s.name);
+    list.append(el('div', { class: 'card', draggable: 'true', dataset: { testid: 'scene-card', id: s.id } },
+      title,
+      el('div', { class: 'card-actions' },
+        el('button', { class: 'icon-btn', title: 'Rename scene',
+          onclick: () => startRename(title, s.name, (name) => db.renameScene(s.id, name)) }, '✎'),
+        el('button', { class: 'icon-btn danger', title: 'Delete scene',
+          onclick: async () => {
+            if (confirm(`Delete scene “${s.name}” and its recorded lines?`)) {
+              await db.deleteScene(s.id);
+              route();
+            }
+          } }, '✕'),
+      ),
+    ));
+  }
+  if (!scenes.length) {
+    list.append(el('p', { class: 'hint' }, 'No scenes yet. A scene is one sequence of reader lines.'));
+  }
+  enableReorder(list, (ids) => db.setSceneOrder(projectId, ids));
+
+  const nameInput = el('input', { class: 'new-input', placeholder: 'New scene name', dataset: { testid: 'new-scene-name' } });
+  const create = async () => {
+    const name = nameInput.value.trim() || nextDefaultName(scenes.map((s) => s.name), 'Scene');
+    const scene = await db.createScene(projectId, name);
+    location.hash = `#/scene/${scene.id}/record`; // jump straight into recording
+  };
+  nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
+
+  const projectTitle = el('h1', { dataset: { testid: 'project-title' } }, project.name);
+  app.replaceChildren(
+    el('header', {},
+      el('a', { class: 'back', href: '#/' }, '← Projects'),
+      projectTitle,
+      saveButton(project),
+      el('button', { class: 'icon-btn', title: 'Rename project',
+        onclick: () => startRename(projectTitle, project.name, (name) => db.renameProject(project.id, name)) }, '✎'),
+    ),
+    el('section', {},
+      el('h2', {}, 'Scenes'),
+      list,
+      el('div', { class: 'new-row' }, nameInput,
+        el('button', { class: 'btn', dataset: { testid: 'create-scene' }, onclick: create }, 'Create')),
+    ),
+  );
+}
+
+// ---- Scene view scaffolding (shared by record + play) ----
+async function sceneHeader(scene, mode) {
+  const title = el('h1', { dataset: { testid: 'scene-title' } }, scene.name);
+  return el('header', {},
+    el('a', { class: 'back', href: `#/project/${scene.projectId}` }, '← Scenes'),
+    title,
+    el('button', { class: 'icon-btn', title: 'Rename scene',
+      onclick: () => startRename(title, scene.name, (name) => db.renameScene(scene.id, name)) }, '✎'),
+    el('nav', { class: 'tabs' },
+      el('a', { class: `tab ${mode === 'record' ? 'active' : ''}`, href: `#/scene/${scene.id}/record` }, 'Record'),
+      el('a', { class: `tab ${mode === 'play' ? 'active' : ''}`, href: `#/scene/${scene.id}/play`, dataset: { testid: 'tab-play' } }, 'Play'),
+    ),
+  );
+}
+
+// ---- Record mode ----
+async function renderRecord(sceneId) {
+  const scene = await db.getScene(sceneId);
+  if (!scene) { location.hash = '#/'; return; }
+
+  const recorder = new Recorder();
+  let captureMode = localStorage.getItem('scenestudy.captureMode') || 'tap'; // 'tap' | 'hold'
+  let rerecordLine = null; // line being replaced, or null = append
+  let micError = null;
+  let micReady = false;
+
+  const status = el('p', { class: 'status', dataset: { testid: 'record-status' } });
+  const recordBtn = el('button', { class: 'record-btn', dataset: { testid: 'record-btn' } }, el('span', { class: 'record-dot' }));
+  const linesBox = el('div', { class: 'lines' });
+  const modeToggle = el('div', { class: 'seg' });
+
+  const preview = new Audio();
+  let previewUrl = null;
+  let previewingId = null;
+  preview.addEventListener('ended', () => { previewingId = null; refreshLines(); });
+
+  function setStatus() {
+    if (micError) { status.textContent = micError; status.classList.add('error'); return; }
+    status.classList.remove('error');
+    if (!micReady) { status.textContent = 'Requesting microphone…'; return; }
+    if (recorder.recording) {
+      status.textContent = rerecordLine
+        ? `Recording — replaces line ${rerecordLine.index + 1}`
+        : `Recording line ${nextLineNumber}…`;
+    } else if (rerecordLine) {
+      status.textContent = `Ready to re-record line ${rerecordLine.index + 1} — ${captureMode === 'tap' ? 'press to start' : 'hold to record'}`;
+    } else {
+      status.textContent = `Ready — ${captureMode === 'tap' ? 'press to start line' : 'hold to record line'} ${nextLineNumber}`;
+    }
+    recordBtn.classList.toggle('recording', recorder.recording);
+  }
+
+  let nextLineNumber = 1;
+  async function refreshLines() {
+    const lines = await db.listLines(sceneId);
+    nextLineNumber = lines.length + 1;
+    linesBox.replaceChildren(...lines.map((line) => el('div', { class: `line-row ${rerecordLine?.id === line.id ? 'armed' : ''}`, dataset: { testid: 'line-row' } },
+      el('span', { class: 'line-num' }, `Line ${line.index + 1}`),
+      el('span', { class: 'line-dur' }, fmtDuration(line.duration)),
+      el('span', { class: 'line-actions' },
+        el('button', { class: 'icon-btn', title: 'Preview line', onclick: () => {
+          if (previewingId === line.id) {
+            preview.pause(); previewingId = null;
+          } else {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            previewUrl = URL.createObjectURL(line.blob);
+            preview.src = previewUrl;
+            preview.play();
+            previewingId = line.id;
+          }
+          refreshLines();
+        } }, previewingId === line.id ? '⏹' : '▶'),
+        el('button', { class: 'icon-btn', title: 'Re-record this line', onclick: () => {
+          rerecordLine = rerecordLine?.id === line.id ? null : line;
+          setStatus(); refreshLines();
+        } }, '⟳'),
+        el('button', { class: 'icon-btn danger', title: 'Delete line', onclick: async () => {
+          if (confirm(`Delete line ${line.index + 1}?`)) {
+            if (rerecordLine?.id === line.id) rerecordLine = null;
+            await db.deleteLine(line.id);
+            await refreshLines(); setStatus();
+          }
+        } }, '✕'),
+      ),
+    )));
+    if (!lines.length) linesBox.replaceChildren(el('p', { class: 'hint' }, 'No lines yet. Each recording becomes the next line in the sequence.'));
+    setStatus();
+  }
+
+  function renderModeToggle() {
+    modeToggle.replaceChildren(
+      ...[['tap', 'Tap start / stop'], ['hold', 'Hold to record']].map(([value, label]) =>
+        el('button', {
+          class: `seg-btn ${captureMode === value ? 'active' : ''}`,
+          dataset: { testid: `mode-${value}` },
+          onclick: () => {
+            if (recorder.recording) return;
+            captureMode = value;
+            localStorage.setItem('scenestudy.captureMode', value);
+            renderModeToggle(); setStatus();
+          },
+        }, label)),
+    );
+  }
+
+  async function startCapture() {
+    if (recorder.recording || micError || !micReady) return;
+    recorder.start();
+    setStatus();
+  }
+
+  async function stopCapture() {
+    if (!recorder.recording) return;
+    const clip = await recorder.stop();
+    if (clip) {
+      if (rerecordLine) {
+        await db.replaceLineAudio(rerecordLine.id, clip);
+        rerecordLine = null;
+      } else {
+        await db.addLine(sceneId, clip);
+      }
+    }
+    await refreshLines();
+  }
+
+  // Button input, branching on capture mode.
+  recordBtn.addEventListener('click', () => {
+    if (captureMode !== 'tap') return;
+    recorder.recording ? stopCapture() : startCapture();
+  });
+  recordBtn.addEventListener('pointerdown', (e) => {
+    if (captureMode !== 'hold') return;
+    e.preventDefault();
+    recordBtn.setPointerCapture(e.pointerId);
+    startCapture();
+  });
+  const holdStop = () => { if (captureMode === 'hold') stopCapture(); };
+  recordBtn.addEventListener('pointerup', holdStop);
+  recordBtn.addEventListener('pointercancel', holdStop);
+  recordBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Spacebar mirrors the button on a laptop.
+  const onKeyDown = (e) => {
+    if (e.code !== 'Space' || e.target.tagName === 'INPUT') return;
+    e.preventDefault();
+    if (e.repeat) return;
+    if (captureMode === 'tap') recorder.recording ? stopCapture() : startCapture();
+    else startCapture();
+  };
+  const onKeyUp = (e) => {
+    if (e.code !== 'Space' || e.target.tagName === 'INPUT') return;
+    if (captureMode === 'hold') stopCapture();
+  };
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup', onKeyUp);
+
+  cleanup = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('keyup', onKeyUp);
+    preview.pause();
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    recorder.dispose();
+  };
+
+  app.replaceChildren(
+    await sceneHeader(scene, 'record'),
+    el('section', { class: 'record-pane' },
+      modeToggle,
+      recordBtn,
+      status,
+      el('h2', {}, 'Lines'),
+      linesBox,
+    ),
+  );
+  renderModeToggle();
+  await refreshLines();
+
+  try {
+    await recorder.init();
+    micReady = true;
+  } catch (err) {
+    micError = 'Microphone unavailable — allow mic access in the browser and reload.';
+  }
+  setStatus();
+}
+
+// ---- Play mode ----
+async function renderPlay(sceneId) {
+  const scene = await db.getScene(sceneId);
+  if (!scene) { location.hash = '#/'; return; }
+  const lines = await db.listLines(sceneId);
+
+  let playMode = localStorage.getItem('scenestudy.playMode') || 'tap'; // 'tap' | 'hold'
+
+  const status = el('p', { class: 'status big', dataset: { testid: 'play-status' } });
+  const hint = el('p', { class: 'hint' });
+  const lineList = el('div', { class: 'lines compact' });
+  const stage = el('div', { class: 'stage', dataset: { testid: 'stage' } }, status, hint);
+  const modeToggle = el('div', { class: 'seg' });
+
+  const player = new SequencePlayer(lines, update);
+
+  function renderModeToggle() {
+    modeToggle.replaceChildren(
+      ...[['tap', 'Tap to play'], ['hold', 'Hold to play']].map(([value, label]) =>
+        el('button', {
+          class: `seg-btn ${playMode === value ? 'active' : ''}`,
+          dataset: { testid: `playmode-${value}` },
+          onclick: () => {
+            if (playMode === value) return;
+            playMode = value;
+            localStorage.setItem('scenestudy.playMode', value);
+            player.reset(); // modes have different input meanings; start clean
+            renderModeToggle();
+            update();
+          },
+        }, label)),
+    );
+  }
+
+  function update() {
+    const n = player.count;
+    if (!n) status.textContent = 'No lines recorded yet';
+    else if (player.playingIndex !== null) status.textContent = `Playing line ${player.playingIndex + 1} of ${n}`;
+    else if (player.pausedIndex !== null) status.textContent = `Paused in line ${player.pausedIndex + 1} of ${n} — hold to resume`;
+    else if (player.nextIndex >= n) status.textContent = playMode === 'hold' ? 'End of scene — double-press to reset' : 'End of scene — hold to reset';
+    else status.textContent = `${playMode === 'hold' ? 'Hold to play' : 'Press to play'} line ${player.nextIndex + 1} of ${n}`;
+    hint.textContent = !lines.length
+      ? 'Record some lines first, then play them back here.'
+      : playMode === 'hold'
+        ? 'Hold space or press-and-hold this area to play; release to pause. Double-press to reset to line 1.'
+        : 'Press space or tap anywhere in this area to play the next line. Hold 1 second to reset to line 1.';
+    stage.classList.toggle('playing', player.playingIndex !== null);
+    lineList.replaceChildren(...lines.map((line, i) =>
+      el('div', { class: `line-row ${player.playingIndex === i || player.pausedIndex === i ? 'current' : ''} ${i < player.nextIndex ? 'done' : ''}` },
+        el('span', { class: 'line-num' }, `Line ${i + 1}`),
+        el('span', { class: 'line-dur' }, fmtDuration(line.duration)),
+      )));
+  }
+
+  function flashReset() {
+    stage.classList.add('reset-flash');
+    setTimeout(() => stage.classList.remove('reset-flash'), 400);
+  }
+
+  // Tap mode: one input = next line; holding past HOLD_MS resets to line 1.
+  // Hold mode: line plays while held, release pauses, next hold resumes;
+  // a double-press resets to line 1.
+  let holdTimer = null;
+  let pressed = false;
+  let pressStartedAt = 0;
+  let lastReleaseAt = 0;
+  let lastPressDuration = Infinity;
+  function press() {
+    if (pressed) return;
+    pressed = true;
+    const now = performance.now();
+    // A double-press is two short taps in quick succession — a hold released
+    // and re-pressed is a resume, not a double.
+    const isDouble = now - lastReleaseAt < 300 && lastPressDuration < 250;
+    pressStartedAt = now;
+    if (playMode === 'tap') {
+      player.advance();
+      holdTimer = setTimeout(() => { player.reset(); flashReset(); }, HOLD_MS);
+    } else if (isDouble) {
+      player.reset();
+      flashReset();
+    } else {
+      player.resumeOrAdvance();
+    }
+  }
+  function release() {
+    if (!pressed) return;
+    pressed = false;
+    const now = performance.now();
+    lastPressDuration = now - pressStartedAt;
+    lastReleaseAt = now;
+    clearTimeout(holdTimer);
+    if (playMode === 'hold') player.pause();
+  }
+
+  stage.addEventListener('pointerdown', (e) => { e.preventDefault(); press(); });
+  stage.addEventListener('pointerup', release);
+  stage.addEventListener('pointercancel', release);
+  stage.addEventListener('contextmenu', (e) => e.preventDefault());
+  const onKeyDown = (e) => {
+    if (e.code !== 'Space' || e.target.tagName === 'INPUT') return;
+    e.preventDefault();
+    if (!e.repeat) press();
+  };
+  const onKeyUp = (e) => {
+    if (e.code === 'Space') release();
+  };
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup', onKeyUp);
+
+  cleanup = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('keyup', onKeyUp);
+    clearTimeout(holdTimer);
+    player.dispose();
+  };
+
+  app.replaceChildren(
+    await sceneHeader(scene, 'play'),
+    el('section', { class: 'play-pane' }, modeToggle, stage, lineList),
+  );
+  renderModeToggle();
+  update();
+}
+
+// ---- Router ----
+async function route() {
+  if (cleanup) { cleanup(); cleanup = null; }
+  const hash = location.hash || '#/';
+  let m;
+  if ((m = hash.match(/^#\/project\/([\w-]+)$/))) await renderProject(m[1]);
+  else if ((m = hash.match(/^#\/scene\/([\w-]+)\/record$/))) await renderRecord(m[1]);
+  else if ((m = hash.match(/^#\/scene\/([\w-]+)\/play$/))) await renderPlay(m[1]);
+  else await renderProjects();
+}
+
+// ---- ZIP import (shared by the Import button and drag & drop) ----
+// Brief confirmation message, bottom of the screen.
+function showToast(text) {
+  const toast = el('div', { class: 'toast', dataset: { testid: 'toast' } }, text);
+  document.body.append(toast);
+  setTimeout(() => toast.remove(), 3500);
+}
+
+// Unlike creating, importing never navigates — the user stays exactly where
+// they are. An import matching an existing project merges into it.
+async function importZip(file) {
+  try {
+    const { project, merged, added, skipped } = await importProject(file);
+    const scenes = (n) => `${n} scene${n === 1 ? '' : 's'}`;
+    showToast(merged
+      ? `Merged into “${project.name}” — ${scenes(added)} added, ${skipped} duplicate${skipped === 1 ? '' : 's'} skipped`
+      : `Imported “${project.name}”`);
+    // Refresh list views in place so new cards appear; scene views are
+    // untouched by an import (it only ever adds scenes), so leave them be.
+    const hash = location.hash || '#/';
+    if (hash === '#/' || hash.startsWith('#/project/')) route();
+  } catch (err) {
+    alert(`Could not import: ${err.message}`);
+  }
+}
+
+// Drag a saved ZIP anywhere in the window to import it.
+const dropOverlay = el('div', { class: 'drop-overlay', dataset: { testid: 'drop-overlay' } },
+  'Drop ZIP to import project');
+document.body.append(dropOverlay);
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => {
+  if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+  e.preventDefault();
+  dragDepth += 1;
+  dropOverlay.classList.add('visible');
+});
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('dragleave', () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) dropOverlay.classList.remove('visible');
+});
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  dropOverlay.classList.remove('visible');
+  const file = [...(e.dataTransfer?.files || [])].find((f) => f.name.toLowerCase().endsWith('.zip'));
+  if (file) importZip(file);
+});
+
+window.addEventListener('hashchange', route);
+route();
