@@ -46,7 +46,7 @@ h2 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spa
 .card-title:hover { color: var(--accent); }
 .card-actions { display: flex; gap: 6px; }
 
-.new-row { display: flex; gap: 8px; margin-top: 14px; }
+.new-row { display: flex; gap: 8px; margin: 0 0 14px; }
 .new-input, .rename-input {
   flex: 1; background: var(--panel-2); color: var(--text);
   border: 1px solid #333a44; border-radius: 10px; padding: 12px 14px; font-size: 1rem;

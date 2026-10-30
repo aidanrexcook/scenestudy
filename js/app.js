@@ -157,11 +157,11 @@ async function renderProjects() {
     el('header', {}, el('h1', {}, 'SceneStudy'), el('p', { class: 'tagline' }, 'Record a reader’s lines, play them back one press at a time.')),
     el('section', {},
       el('h2', {}, 'Projects'),
-      list,
       el('div', { class: 'new-row' }, nameInput,
         el('button', { class: 'btn', dataset: { testid: 'create-project' }, onclick: create }, 'Create'),
         el('button', { class: 'btn secondary', dataset: { testid: 'import-project' }, onclick: () => importInput.click() }, 'Import ZIP'),
         importInput),
+      list,
     ),
   );
 }
